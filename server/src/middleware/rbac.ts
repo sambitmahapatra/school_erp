@@ -1,8 +1,8 @@
-﻿import { Response, NextFunction } from "express";
-import { AuthedRequest } from "./types";
+import { Request, Response, NextFunction } from "express";
+
 
 export function requirePermission(permission: string) {
-  return (req: AuthedRequest, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: { code: "unauthorized", message: "Not authenticated" } });
     }

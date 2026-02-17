@@ -1,4 +1,4 @@
-﻿import { Request } from "express";
+import { Request } from "express";
 
 export type AuthContext = {
   id: number;
@@ -7,4 +7,4 @@ export type AuthContext = {
   teacherId?: number | null;
 };
 
-export type AuthedRequest = Request & { user: AuthContext };
+export type AuthedRequest = Request & { user?: AuthContext };
