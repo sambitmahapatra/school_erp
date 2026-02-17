@@ -1,6 +1,6 @@
 ﻿import { getDb } from "../../db";
 
-export function getDashboardSummary(input: { userId: number; teacherId?: number | null }) {
+export async function getDashboardSummary(input: { userId: number; teacherId?: number | null }) {
   const db = getDb();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -8,60 +8,60 @@ export function getDashboardSummary(input: { userId: number; teacherId?: number 
   let attendanceSubmitted = 0;
 
   if (input.teacherId) {
-    attendanceExpected = (db
+    attendanceExpected = ((await db
       .prepare("SELECT COUNT(*) as count FROM teacher_assignments WHERE teacher_id = ? AND is_active = 1")
-      .get(input.teacherId) as { count: number }).count;
+      .get(input.teacherId)) as { count: number }).count;
 
-    attendanceSubmitted = (db
+    attendanceSubmitted = ((await db
       .prepare(
         "SELECT COUNT(*) as count FROM attendance_sessions WHERE teacher_id = ? AND date = ? AND status = 'submitted'"
       )
-      .get(input.teacherId, today) as { count: number }).count;
+      .get(input.teacherId, today)) as { count: number }).count;
   }
 
-  const activeYear = db
+  const activeYear = (await db
     .prepare("SELECT id FROM academic_years WHERE is_active = 1 LIMIT 1")
-    .get() as { id: number } | undefined;
+    .get()) as { id: number } | undefined;
 
   let pendingMarks = 0;
 
   if (activeYear && input.teacherId) {
-    const latestExam = db
+    const latestExam = (await db
       .prepare("SELECT id FROM exams WHERE academic_year_id = ? ORDER BY start_date DESC LIMIT 1")
-      .get(activeYear.id) as { id: number } | undefined;
+      .get(activeYear.id)) as { id: number } | undefined;
 
     if (latestExam) {
-      const assignments = db
+      const assignments = (await db
         .prepare("SELECT class_id, subject_id FROM teacher_assignments WHERE teacher_id = ? AND is_active = 1")
-        .all(input.teacherId) as { class_id: number; subject_id: number | null }[];
+        .all(input.teacherId)) as { class_id: number; subject_id: number | null }[];
 
       for (const assignment of assignments) {
         const classSubject = assignment.subject_id
-          ? (db
+          ? ((await db
               .prepare("SELECT id, is_optional FROM class_subjects WHERE class_id = ? AND subject_id = ?")
-              .get(assignment.class_id, assignment.subject_id) as { id: number; is_optional: number } | undefined)
+              .get(assignment.class_id, assignment.subject_id)) as { id: number; is_optional: number } | undefined)
           : undefined;
 
         const students = classSubject && classSubject.is_optional
-          ? (db
+          ? ((await db
               .prepare(
                 "SELECT COUNT(*) as count FROM students st LEFT JOIN student_subjects ss ON ss.student_id = st.id AND ss.class_subject_id = ? WHERE st.class_id = ? AND st.status = 'active' AND (ss.is_enrolled IS NULL OR ss.is_enrolled = 1)"
               )
-              .get(classSubject.id, assignment.class_id) as { count: number }).count
-          : (db
+              .get(classSubject.id, assignment.class_id)) as { count: number }).count
+          : ((await db
               .prepare("SELECT COUNT(*) as count FROM students WHERE class_id = ? AND status = 'active'")
-              .get(assignment.class_id) as { count: number }).count;
-        const actual = (db
+              .get(assignment.class_id)) as { count: number }).count;
+        const actual = ((await db
           .prepare(
             "SELECT COUNT(*) as count FROM marks_entries WHERE exam_id = ? AND class_id = ? AND subject_id = ?"
           )
-          .get(latestExam.id, assignment.class_id, assignment.subject_id) as { count: number }).count;
+          .get(latestExam.id, assignment.class_id, assignment.subject_id)) as { count: number }).count;
         pendingMarks += Math.max(0, students - actual);
       }
     }
   }
 
-  const upcomingExams = db
+  const upcomingExams = await db
     .prepare("SELECT id, name, start_date FROM exams WHERE start_date >= ? ORDER BY start_date ASC LIMIT 5")
     .all(today);
 
@@ -76,7 +76,7 @@ export function getDashboardSummary(input: { userId: number; teacherId?: number 
   };
 }
 
-export function getDashboardAlerts(teacherId?: number | null) {
+export async function getDashboardAlerts(teacherId?: number | null) {
   const db = getDb();
   if (!teacherId) return [];
 

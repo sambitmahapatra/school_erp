@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { validateBody } from "../middleware/validate";
+import { asyncHandler } from "../middleware/async-handler";
 import {
   addComponent,
   bulkUpsertMarks,
@@ -17,11 +18,11 @@ import {
 
 const router = Router();
 
-router.get("/exams", requireAuth, requirePermission("marks.read"), (req, res) => {
+router.get("/exams", requireAuth, requirePermission("marks.read"), asyncHandler(async (req, res) => {
   const yearId = req.query.yearId ? Number(req.query.yearId) : undefined;
-  const exams = listExams(yearId);
+  const exams = await listExams(yearId);
   res.json({ data: exams });
-});
+}));
 
 const examSchema = z.object({
   academicYearId: z.number(),
@@ -37,30 +38,30 @@ router.post(
   requireAuth,
   requirePermission("marks.write"),
   validateBody(examSchema),
-  (req, res) => {
-    const id = createExam({ ...req.body, createdBy: req.user.id });
+  asyncHandler(async (req, res) => {
+    const id = await createExam({ ...req.body, createdBy: req.user.id });
     res.json({ data: { id } });
-  }
+  })
 );
 
-router.delete("/exams/:id", requireAuth, requirePermission("admin.read"), (req, res) => {
+router.delete("/exams/:id", requireAuth, requirePermission("admin.read"), asyncHandler(async (req, res) => {
   const examId = Number(req.params.id);
   if (!examId) {
     return res.status(400).json({ error: { code: "invalid_params", message: "Exam id is required." } });
   }
   try {
-    deleteExam(examId);
+    await deleteExam(examId);
     res.json({ data: { ok: true } });
   } catch (err: any) {
     res.status(400).json({ error: { code: "invalid_request", message: err?.message || "Failed to delete exam" } });
   }
-});
+}));
 
-router.get("/exams/:id/components", requireAuth, requirePermission("marks.read"), (req, res) => {
+router.get("/exams/:id/components", requireAuth, requirePermission("marks.read"), asyncHandler(async (req, res) => {
   const examId = Number(req.params.id);
-  const components = listComponents(examId);
+  const components = await listComponents(examId);
   res.json({ data: components });
-});
+}));
 
 const componentSchema = z.object({
   name: z.string().min(1),
@@ -73,11 +74,11 @@ router.post(
   requireAuth,
   requirePermission("marks.write"),
   validateBody(componentSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const examId = Number(req.params.id);
-    const id = addComponent({ examId, ...req.body });
+    const id = await addComponent({ examId, ...req.body });
     res.json({ data: { id } });
-  }
+  })
 );
 
 const bulkSchema = z.object({
@@ -101,13 +102,13 @@ router.post(
   requireAuth,
   requirePermission("marks.write"),
   validateBody(bulkSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     if (!req.user.teacherId) {
       return res.status(400).json({ error: { code: "invalid_state", message: "Teacher profile missing" } });
     }
     const { examId, componentId, classId, subjectId, entries } = req.body as any;
     try {
-      bulkUpsertMarks({
+      await bulkUpsertMarks({
         examId,
         componentId: componentId || null,
         classId,
@@ -119,28 +120,28 @@ router.post(
     } catch (err: any) {
       res.status(400).json({ error: { code: "invalid_request", message: err?.message || "Failed to save marks" } });
     }
-  }
+  })
 );
 
-router.get("/list", requireAuth, requirePermission("marks.read"), (req, res) => {
+router.get("/list", requireAuth, requirePermission("marks.read"), asyncHandler(async (req, res) => {
   const examId = Number(req.query.examId);
   const classId = Number(req.query.classId);
   const subjectId = Number(req.query.subjectId);
-  const data = getMarks({ examId, classId, subjectId });
+  const data = await getMarks({ examId, classId, subjectId });
   res.json({ data });
-});
+}));
 
-router.get("/analytics/class", requireAuth, requirePermission("marks.read"), (req, res) => {
+router.get("/analytics/class", requireAuth, requirePermission("marks.read"), asyncHandler(async (req, res) => {
   const examId = Number(req.query.examId);
   const classId = Number(req.query.classId);
-  const data = getClassPerformance(examId, classId);
+  const data = await getClassPerformance(examId, classId);
   res.json({ data });
-});
+}));
 
-router.get("/analytics/student/:studentId", requireAuth, requirePermission("marks.read"), (req, res) => {
+router.get("/analytics/student/:studentId", requireAuth, requirePermission("marks.read"), asyncHandler(async (req, res) => {
   const studentId = Number(req.params.studentId);
-  const data = getStudentPerformance(studentId);
+  const data = await getStudentPerformance(studentId);
   res.json({ data });
-});
+}));
 
 export default router;

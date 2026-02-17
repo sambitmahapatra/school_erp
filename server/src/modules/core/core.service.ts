@@ -1,6 +1,6 @@
 ﻿import { getDb } from "../../db";
 
-export function getClassesForUser(userId: number, isAdmin: boolean) {
+export async function getClassesForUser(userId: number, isAdmin: boolean) {
   const db = getDb();
   if (isAdmin) {
     return db.prepare("SELECT * FROM classes ORDER BY grade, name, section").all();
@@ -12,14 +12,14 @@ export function getClassesForUser(userId: number, isAdmin: boolean) {
     .all(userId);
 }
 
-export function getAcademicYears() {
+export async function getAcademicYears() {
   const db = getDb();
   return db
     .prepare("SELECT id, name, start_date, end_date, is_active FROM academic_years ORDER BY start_date DESC")
     .all();
 }
 
-export function getSubjectsForUser(userId: number, isAdmin: boolean) {
+export async function getSubjectsForUser(userId: number, isAdmin: boolean) {
   const db = getDb();
   if (isAdmin) {
     return db.prepare("SELECT * FROM subjects ORDER BY name").all();
@@ -31,10 +31,10 @@ export function getSubjectsForUser(userId: number, isAdmin: boolean) {
     .all(userId);
 }
 
-export function getStudentsForClass(userId: number, classId: number, isAdmin: boolean) {
+export async function getStudentsForClass(userId: number, classId: number, isAdmin: boolean) {
   const db = getDb();
   if (!isAdmin) {
-    const allowed = db
+    const allowed = await db
       .prepare(
         "SELECT 1 FROM teacher_assignments ta INNER JOIN teacher_profiles tp ON tp.id = ta.teacher_id WHERE tp.user_id = ? AND ta.class_id = ? AND ta.is_active = 1 LIMIT 1"
       )
@@ -47,7 +47,7 @@ export function getStudentsForClass(userId: number, classId: number, isAdmin: bo
     .all(classId);
 }
 
-export function getAssignments(userId: number, isAdmin: boolean) {
+export async function getAssignments(userId: number, isAdmin: boolean) {
   const db = getDb();
   if (isAdmin) {
     return db.prepare("SELECT * FROM teacher_assignments WHERE is_active = 1").all();
@@ -78,13 +78,13 @@ function generateSubjectCode(name: string, existing: Set<string>) {
   return `${base}${counter}`;
 }
 
-export function getClassSubjects(classId: number) {
+export async function getClassSubjects(classId: number) {
   const db = getDb();
-  const rows = db
+  const rows = (await db
     .prepare(
       "SELECT cs.id as class_subject_id, cs.is_optional, s.id as subject_id, s.name, s.code FROM class_subjects cs INNER JOIN subjects s ON s.id = cs.subject_id WHERE cs.class_id = ? ORDER BY s.name"
     )
-    .all(classId) as Array<{
+    .all(classId)) as Array<{
     class_subject_id: number;
     is_optional: number;
     subject_id: number;
@@ -97,11 +97,11 @@ export function getClassSubjects(classId: number) {
 
   if (classSubjectIds.length) {
     const placeholders = classSubjectIds.map(() => "?").join(",");
-    const rules = db
+    const rules = (await db
       .prepare(
         `SELECT class_subject_id, exam_type, max_marks FROM class_subject_exam_rules WHERE class_subject_id IN (${placeholders})`
       )
-      .all(...classSubjectIds) as Array<{ class_subject_id: number; exam_type: string; max_marks: number }>;
+      .all(...classSubjectIds)) as Array<{ class_subject_id: number; exam_type: string; max_marks: number }>;
 
     for (const rule of rules) {
       const current = rulesMap.get(rule.class_subject_id) || {};
@@ -120,14 +120,14 @@ export function getClassSubjects(classId: number) {
   }));
 }
 
-export function getClassSubjectMeta(classId: number, subjectId: number) {
+export async function getClassSubjectMeta(classId: number, subjectId: number) {
   const db = getDb();
-  return db
+  return (await db
     .prepare("SELECT id, is_optional FROM class_subjects WHERE class_id = ? AND subject_id = ?")
-    .get(classId, subjectId) as { id: number; is_optional: number } | undefined;
+    .get(classId, subjectId)) as { id: number; is_optional: number } | undefined;
 }
 
-export function upsertClassSubject(input: {
+export async function upsertClassSubject(input: {
   classId: number;
   subjectName: string;
   subjectCode?: string | null;
@@ -137,7 +137,7 @@ export function upsertClassSubject(input: {
   const db = getDb();
   const now = new Date().toISOString();
 
-  const classRow = db.prepare("SELECT grade FROM classes WHERE id = ?").get(input.classId) as
+  const classRow = (await db.prepare("SELECT grade FROM classes WHERE id = ?").get(input.classId)) as
     | { grade: number }
     | undefined;
   if (!classRow) {
@@ -146,50 +146,51 @@ export function upsertClassSubject(input: {
 
   let subject =
     (input.subjectCode
-      ? db.prepare("SELECT id, name, code FROM subjects WHERE code = ?").get(input.subjectCode)
+      ? await db.prepare("SELECT id, name, code FROM subjects WHERE code = ?").get(input.subjectCode)
       : undefined) ||
-    db.prepare("SELECT id, name, code FROM subjects WHERE lower(name) = lower(?) LIMIT 1").get(input.subjectName);
+    (await db.prepare("SELECT id, name, code FROM subjects WHERE lower(name) = lower(?) LIMIT 1").get(input.subjectName));
 
   if (!subject) {
     const existingCodes = new Set(
-      (db.prepare("SELECT code FROM subjects").all() as Array<{ code: string }>).map((row) => row.code)
+      ((await db.prepare("SELECT code FROM subjects").all()) as Array<{ code: string }>).map((row) => row.code)
     );
     const code = input.subjectCode?.trim() || generateSubjectCode(input.subjectName, existingCodes);
-    const result = db
+    const result = await db
       .prepare("INSERT INTO subjects (name, code, grade_from, grade_to) VALUES (?, ?, ?, ?)")
       .run(input.subjectName, code, classRow.grade, classRow.grade);
     subject = { id: Number(result.lastInsertRowid), name: input.subjectName, code };
   }
 
-  db.prepare(
-    "INSERT OR IGNORE INTO class_subjects (class_id, subject_id, is_optional, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(input.classId, subject.id, input.isOptional ? 1 : 0, now, now);
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO class_subjects (class_id, subject_id, is_optional, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+    )
+    .run(input.classId, subject.id, input.isOptional ? 1 : 0, now, now);
 
-  db.prepare("UPDATE class_subjects SET is_optional = ?, updated_at = ? WHERE class_id = ? AND subject_id = ?").run(
-    input.isOptional ? 1 : 0,
-    now,
-    input.classId,
-    subject.id
-  );
+  await db
+    .prepare("UPDATE class_subjects SET is_optional = ?, updated_at = ? WHERE class_id = ? AND subject_id = ?")
+    .run(input.isOptional ? 1 : 0, now, input.classId, subject.id);
 
-  const classSubject = db
+  const classSubject = (await db
     .prepare("SELECT id FROM class_subjects WHERE class_id = ? AND subject_id = ?")
-    .get(input.classId, subject.id) as { id: number } | undefined;
+    .get(input.classId, subject.id)) as { id: number } | undefined;
 
   if (classSubject && input.maxMarks) {
     for (const examType of EXAM_TYPES) {
       const value = input.maxMarks[examType];
       if (!value || value <= 0) continue;
-      db.prepare(
-        "INSERT OR REPLACE INTO class_subject_exam_rules (class_subject_id, exam_type, max_marks, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-      ).run(classSubject.id, examType, value, now, now);
+      await db
+        .prepare(
+          "INSERT INTO class_subject_exam_rules (class_subject_id, exam_type, max_marks, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (class_subject_id, exam_type) DO UPDATE SET max_marks = EXCLUDED.max_marks, updated_at = EXCLUDED.updated_at"
+        )
+        .run(classSubject.id, examType, value, now, now);
     }
   }
 
   return { classSubjectId: classSubject?.id, subject };
 }
 
-export function setStudentSubjectEnrollment(input: {
+export async function setStudentSubjectEnrollment(input: {
   studentId: number;
   classSubjectId: number;
   isEnrolled: boolean;
@@ -197,11 +198,15 @@ export function setStudentSubjectEnrollment(input: {
   const db = getDb();
   const now = new Date().toISOString();
 
-  db.prepare(
-    "INSERT OR IGNORE INTO student_subjects (student_id, class_subject_id, is_enrolled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(input.studentId, input.classSubjectId, input.isEnrolled ? 1 : 0, now, now);
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO student_subjects (student_id, class_subject_id, is_enrolled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+    )
+    .run(input.studentId, input.classSubjectId, input.isEnrolled ? 1 : 0, now, now);
 
-  db.prepare(
-    "UPDATE student_subjects SET is_enrolled = ?, updated_at = ? WHERE student_id = ? AND class_subject_id = ?"
-  ).run(input.isEnrolled ? 1 : 0, now, input.studentId, input.classSubjectId);
+  await db
+    .prepare(
+      "UPDATE student_subjects SET is_enrolled = ?, updated_at = ? WHERE student_id = ? AND class_subject_id = ?"
+    )
+    .run(input.isEnrolled ? 1 : 0, now, input.studentId, input.classSubjectId);
 }

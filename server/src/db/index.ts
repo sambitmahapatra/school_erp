@@ -1,115 +1,135 @@
-﻿/// <reference path="../sql.js.d.ts" />
-import fs from "fs";
-import path from "path";
-import initSqlJs from "sql.js";
-import { config } from "../config";
+﻿import { Pool, PoolClient, types } from "pg";
+
+types.setTypeParser(20, (value: string) => Number.parseInt(value, 10));
 
 export type DbStatement = {
-  get: (...params: any[]) => any;
-  all: (...params: any[]) => any[];
-  run: (...params: any[]) => { lastInsertRowid?: number; changes?: number };
+  get: (...params: any[]) => Promise<any>;
+  all: (...params: any[]) => Promise<any[]>;
+  run: (...params: any[]) => Promise<{ lastInsertRowid?: number; changes?: number }>;
 };
 
 export type Db = {
   prepare: (sql: string) => DbStatement;
-  exec: (sql: string) => void;
-  transaction: (fn: () => void) => () => void;
-  pragma: (sql: string) => void;
+  exec: (sql: string) => Promise<void>;
+  transaction: <T>(fn: (db: Db) => Promise<T>) => Promise<T>;
 };
 
-let db: any = null;
+let pool: Pool | null = null;
 let initPromise: Promise<Db> | null = null;
-let transactionDepth = 0;
 
-function ensureDataDir() {
-  if (!fs.existsSync(config.dataDir)) {
-    fs.mkdirSync(config.dataDir, { recursive: true });
+function normalizeSql(sql: string) {
+  let normalized = sql.trim();
+
+  if (/^INSERT\s+OR\s+IGNORE/i.test(normalized)) {
+    normalized = normalized.replace(/^INSERT\s+OR\s+IGNORE/i, "INSERT");
+    if (!/ON\s+CONFLICT/i.test(normalized)) {
+      normalized = `${normalized} ON CONFLICT DO NOTHING`;
+    }
+  }
+
+  normalized = normalized.replace(/\bIS\s+\?/gi, "IS NOT DISTINCT FROM ?");
+
+  return normalized;
+}
+
+function toPgParams(sql: string) {
+  let index = 0;
+  return sql.replace(/\?/g, () => {
+    index += 1;
+    return `$${index}`;
+  });
+}
+
+async function queryInternal(sql: string, params: any[], client?: PoolClient) {
+  const normalized = toPgParams(normalizeSql(sql));
+  const runner = client || pool;
+  if (!runner) {
+    throw new Error("Database not initialized. Call initDb first.");
+  }
+  const result = await (runner as Pool).query(normalized, params);
+  return result.rows;
+}
+
+async function runInternal(sql: string, params: any[], client?: PoolClient) {
+  let normalized = normalizeSql(sql);
+  const isInsert = /^\s*INSERT\b/i.test(normalized);
+  const hasReturning = /\bRETURNING\b/i.test(normalized);
+  if (isInsert && !hasReturning) {
+    normalized = `${normalized} RETURNING id`;
+  }
+  const finalSql = toPgParams(normalized);
+  const runner = client || pool;
+  if (!runner) {
+    throw new Error("Database not initialized. Call initDb first.");
+  }
+  const result = await (runner as Pool).query(finalSql, params);
+  return {
+    lastInsertRowid: result.rows?.[0]?.id,
+    changes: result.rowCount ?? 0
+  };
+}
+
+async function execInternal(sql: string, client?: PoolClient) {
+  const runner = client || pool;
+  if (!runner) {
+    throw new Error("Database not initialized. Call initDb first.");
+  }
+  const statements = sql
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  for (const statement of statements) {
+    await (runner as Pool).query(statement);
   }
 }
 
-function persist() {
-  if (!db) return;
-  const data = db.export();
-  fs.writeFileSync(config.dbPath, Buffer.from(data));
-}
-
-function lastInsertId() {
-  const result = db.exec("SELECT last_insert_rowid() as id");
-  if (!result?.length || !result[0].values?.length) return undefined;
-  return result[0].values[0][0] as number;
-}
-
-function buildStatement(sql: string): DbStatement {
-  const stmt = db.prepare(sql);
+function buildStatement(sql: string, client?: PoolClient): DbStatement {
   return {
-    get: (...params: any[]) => {
-      stmt.bind(params);
-      const hasRow = stmt.step();
-      const row = hasRow ? stmt.getAsObject() : undefined;
-      stmt.reset();
-      stmt.bind([]);
-      return row;
+    get: async (...params: any[]) => {
+      const rows = await queryInternal(sql, params, client);
+      return rows[0];
     },
-    all: (...params: any[]) => {
-      stmt.bind(params);
-      const rows: any[] = [];
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject());
-      }
-      stmt.reset();
-      stmt.bind([]);
-      return rows;
+    all: async (...params: any[]) => {
+      return queryInternal(sql, params, client);
     },
-    run: (...params: any[]) => {
-      stmt.bind(params);
-      stmt.step();
-      stmt.reset();
-      stmt.bind([]);
-      const changes = db.getRowsModified ? db.getRowsModified() : undefined;
-      const id = lastInsertId();
-      if (transactionDepth === 0) {
-        persist();
-      }
-      return { lastInsertRowid: id, changes };
+    run: async (...params: any[]) => {
+      const { lastInsertRowid, changes } = await runInternal(sql, params, client);
+      return { lastInsertRowid, changes };
     }
   };
 }
 
-function buildDb(): Db {
+function buildDb(client?: PoolClient): Db {
   return {
-    prepare: (sql: string) => buildStatement(sql),
-    exec: (sql: string) => {
-      db.exec(sql);
-      if (transactionDepth === 0) {
-        persist();
+    prepare: (sql: string) => buildStatement(sql, client),
+    exec: async (sql: string) => {
+      await execInternal(sql, client);
+    },
+    transaction: async <T>(fn: (db: Db) => Promise<T>) => {
+      if (client) {
+        return fn(buildDb(client));
       }
-    },
-    transaction: (fn: () => void) => {
-      return () => {
-        transactionDepth += 1;
-        db.exec("BEGIN");
-        try {
-          fn();
-          db.exec("COMMIT");
-        } catch (err) {
-          db.exec("ROLLBACK");
-          throw err;
-        } finally {
-          transactionDepth -= 1;
-          if (transactionDepth === 0) {
-            persist();
-          }
-        }
-      };
-    },
-    pragma: (sql: string) => {
-      db.exec(`PRAGMA ${sql}`);
+      if (!pool) {
+        throw new Error("Database not initialized. Call initDb first.");
+      }
+      const txClient = await pool.connect();
+      try {
+        await txClient.query("BEGIN");
+        const result = await fn(buildDb(txClient));
+        await txClient.query("COMMIT");
+        return result;
+      } catch (err) {
+        await txClient.query("ROLLBACK");
+        throw err;
+      } finally {
+        txClient.release();
+      }
     }
   };
 }
 
 export function getDb(): Db {
-  if (!db) {
+  if (!pool) {
     throw new Error("Database not initialized. Call initDb first.");
   }
   return buildDb();
@@ -119,29 +139,18 @@ export async function initDb(): Promise<Db> {
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    ensureDataDir();
-    const SQL = await initSqlJs({
-      locateFile: (file: string) => path.resolve(process.cwd(), "node_modules", "sql.js", "dist", file)
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL is not set.");
+    }
+
+    const sslEnabled = String(process.env.DATABASE_SSL || "").toLowerCase();
+    pool = new Pool({
+      connectionString,
+      ssl: sslEnabled === "true" || sslEnabled === "1" ? { rejectUnauthorized: false } : undefined
     });
 
-    if (fs.existsSync(config.dbPath)) {
-      const fileBuffer = fs.readFileSync(config.dbPath);
-      db = new SQL.Database(fileBuffer);
-    } else {
-      db = new SQL.Database();
-    }
-
-    const schemaCandidates = [
-      path.resolve(process.cwd(), "src", "db", "schema.sql"),
-      path.resolve(process.cwd(), "dist", "db", "schema.sql")
-    ];
-    const schemaPath = schemaCandidates.find((p) => fs.existsSync(p));
-    if (!schemaPath) {
-      throw new Error("schema.sql not found in src/db or dist/db");
-    }
-    const schemaSql = fs.readFileSync(schemaPath, "utf-8");
-    db.exec(schemaSql);
-    persist();
+    await pool.query("SELECT 1");
 
     return buildDb();
   })();

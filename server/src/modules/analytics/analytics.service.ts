@@ -1,4 +1,4 @@
-import { getDb } from "../../db";
+﻿import { getDb } from "../../db";
 import { getClassAttendanceSummary } from "../attendance/attendance.service";
 
 type StudentPerformance = {
@@ -92,42 +92,42 @@ function toPercent(numerator: number, denominator: number) {
   return numerator / denominator;
 }
 
-export function getClassAnalytics(input: { classId: number; month?: string }) {
+export async function getClassAnalytics(input: { classId: number; month?: string }) {
   const db = getDb();
-  const classRow = db
+  const classRow = (await db
     .prepare("SELECT id, name FROM classes WHERE id = ?")
-    .get(input.classId) as { id: number; name: string } | undefined;
+    .get(input.classId)) as { id: number; name: string } | undefined;
 
   if (!classRow) return null;
 
   const month = input.month || new Date().toISOString().slice(0, 7);
-  const attendanceTrend = getClassAttendanceSummary(input.classId, month);
+  const attendanceTrend = await getClassAttendanceSummary(input.classId, month);
 
-  const latestExam = db
+  const latestExam = (await db
     .prepare(
       "SELECT e.id, e.name, e.start_date FROM exams e INNER JOIN marks_entries me ON me.exam_id = e.id WHERE me.class_id = ? GROUP BY e.id ORDER BY e.start_date DESC LIMIT 1"
     )
-    .get(input.classId) as { id: number; name: string; start_date: string | null } | undefined;
+    .get(input.classId)) as { id: number; name: string; start_date: string | null } | undefined;
 
   const subjectAverages = latestExam
-    ? (db
+    ? ((await db
         .prepare(
           "SELECT sb.id as subject_id, sb.name as subject_name, AVG(CASE WHEN me.is_absent = 1 THEN NULL ELSE me.marks_obtained * 1.0 / me.max_marks END) AS avg_percent FROM marks_entries me INNER JOIN subjects sb ON sb.id = me.subject_id WHERE me.exam_id = ? AND me.class_id = ? GROUP BY sb.id ORDER BY sb.name"
         )
-        .all(latestExam.id, input.classId) as Array<{ subject_id: number; subject_name: string; avg_percent: number | null }>)
+        .all(latestExam.id, input.classId)) as Array<{ subject_id: number; subject_name: string; avg_percent: number | null }>)
     : [];
 
-  const students = db
+  const students = (await db
     .prepare(
       "SELECT id, first_name, last_name, roll_no FROM students WHERE class_id = ? AND status = 'active' ORDER BY roll_no, first_name"
     )
-    .all(input.classId) as Array<{ id: number; first_name: string; last_name: string; roll_no: number | null }>;
+    .all(input.classId)) as Array<{ id: number; first_name: string; last_name: string; roll_no: number | null }>;
 
-  const attendanceStats = db
+  const attendanceStats = (await db
     .prepare(
       "SELECT ae.student_id, AVG(CASE WHEN ae.status = 'present' THEN 1.0 ELSE 0.0 END) AS attendance_rate, COUNT(ae.id) AS total_entries FROM attendance_entries ae INNER JOIN attendance_sessions s ON s.id = ae.session_id WHERE s.class_id = ? GROUP BY ae.student_id"
     )
-    .all(input.classId) as Array<{ student_id: number; attendance_rate: number; total_entries: number }>;
+    .all(input.classId)) as Array<{ student_id: number; attendance_rate: number; total_entries: number }>;
 
   const attendanceMap = new Map(attendanceStats.map((row) => [row.student_id, row]));
 
@@ -137,11 +137,11 @@ export function getClassAnalytics(input: { classId: number; month?: string }) {
   >();
 
   if (latestExam) {
-    const marksStats = db
+    const marksStats = (await db
       .prepare(
         "SELECT me.student_id, SUM(CASE WHEN me.is_absent = 1 THEN me.max_marks WHEN me.marks_obtained IS NOT NULL THEN me.max_marks ELSE 0 END) AS max_total, SUM(CASE WHEN me.is_absent = 1 THEN 0 WHEN me.marks_obtained IS NOT NULL THEN me.marks_obtained ELSE 0 END) AS obtained_total, SUM(CASE WHEN me.marks_obtained IS NULL AND me.is_absent = 0 THEN 1 ELSE 0 END) AS missing_count FROM marks_entries me WHERE me.exam_id = ? AND me.class_id = ? GROUP BY me.student_id"
       )
-      .all(latestExam.id, input.classId) as Array<{
+      .all(latestExam.id, input.classId)) as Array<{
       student_id: number;
       max_total: number;
       obtained_total: number;
@@ -214,31 +214,31 @@ export function getClassAnalytics(input: { classId: number; month?: string }) {
   };
 }
 
-export function getClassExamAnalytics(input: {
+export async function getClassExamAnalytics(input: {
   classId: number;
   examId: number;
   subjectId?: number | null;
 }) {
   const db = getDb();
-  const classRow = db
+  const classRow = (await db
     .prepare("SELECT id, name FROM classes WHERE id = ?")
-    .get(input.classId) as { id: number; name: string } | undefined;
-  const examRow = db
+    .get(input.classId)) as { id: number; name: string } | undefined;
+  const examRow = (await db
     .prepare("SELECT id, name, start_date, end_date FROM exams WHERE id = ?")
-    .get(input.examId) as { id: number; name: string; start_date: string | null; end_date: string | null } | undefined;
+    .get(input.examId)) as { id: number; name: string; start_date: string | null; end_date: string | null } | undefined;
 
   if (!classRow || !examRow) return null;
 
   const subjectRow = input.subjectId
-    ? (db
+    ? ((await db
         .prepare("SELECT id, name FROM subjects WHERE id = ?")
-        .get(input.subjectId) as { id: number; name: string } | undefined)
+        .get(input.subjectId)) as { id: number; name: string } | undefined)
     : null;
 
   const classSubject = input.subjectId
-    ? (db
+    ? ((await db
         .prepare("SELECT id, is_optional FROM class_subjects WHERE class_id = ? AND subject_id = ?")
-        .get(input.classId, input.subjectId) as { id: number; is_optional: number } | undefined)
+        .get(input.classId, input.subjectId)) as { id: number; is_optional: number } | undefined)
     : undefined;
 
   const optionalFilter =
@@ -252,7 +252,7 @@ export function getClassExamAnalytics(input: {
   params.push(input.classId);
   if (classSubject && classSubject.is_optional) params.push(classSubject.id);
 
-  const rows = db
+  const rows = (await db
     .prepare(
       `SELECT st.id as student_id, st.first_name, st.last_name, st.roll_no,
         COUNT(me.id) as entry_count,
@@ -271,7 +271,7 @@ export function getClassExamAnalytics(input: {
       GROUP BY st.id
       ORDER BY st.roll_no, st.first_name`
     )
-    .all(...params) as Array<{
+    .all(...params)) as Array<{
     student_id: number;
     first_name: string;
     last_name: string;
@@ -320,11 +320,11 @@ export function getClassExamAnalytics(input: {
 
   const subjectBreakdown = input.subjectId
     ? []
-    : (db
+    : ((await db
         .prepare(
           "SELECT sb.id as subject_id, sb.name as subject_name, AVG(CASE WHEN me.is_absent = 1 THEN NULL WHEN me.marks_obtained IS NOT NULL THEN me.marks_obtained * 1.0 / me.max_marks END) AS avg_percent FROM marks_entries me INNER JOIN subjects sb ON sb.id = me.subject_id WHERE me.exam_id = ? AND me.class_id = ? GROUP BY sb.id ORDER BY sb.name"
         )
-        .all(input.examId, input.classId) as Array<{ subject_id: number; subject_name: string; avg_percent: number | null }>);
+        .all(input.examId, input.classId)) as Array<{ subject_id: number; subject_name: string; avg_percent: number | null }>);
 
   const distribution = buildDistribution(students.map((student) => student.percent));
 
@@ -349,13 +349,13 @@ export function getClassExamAnalytics(input: {
   };
 }
 
-export function getStudentAnalytics(input: { studentId: number; startDate?: string; endDate?: string }) {
+export async function getStudentAnalytics(input: { studentId: number; startDate?: string; endDate?: string }) {
   const db = getDb();
-  const student = db
+  const student = (await db
     .prepare(
       "SELECT st.id, st.first_name, st.last_name, st.roll_no, st.class_id, c.name as class_name FROM students st INNER JOIN classes c ON c.id = st.class_id WHERE st.id = ?"
     )
-    .get(input.studentId) as
+    .get(input.studentId)) as
     | { id: number; first_name: string; last_name: string; roll_no: number | null; class_id: number; class_name: string }
     | undefined;
 
@@ -372,13 +372,13 @@ export function getStudentAnalytics(input: { studentId: number; startDate?: stri
     attendanceParams.push(input.endDate);
   }
 
-  const attendanceRows = db
+  const attendanceRows = (await db
     .prepare(
       `SELECT s.date, ae.status FROM attendance_entries ae INNER JOIN attendance_sessions s ON s.id = ae.session_id WHERE ${attendanceClauses.join(
         " AND "
       )} ORDER BY s.date`
     )
-    .all(...attendanceParams) as Array<{ date: string; status: string }>;
+    .all(...attendanceParams)) as Array<{ date: string; status: string }>;
 
   const attendanceCounts = attendanceRows.reduce(
     (acc, row) => {
@@ -407,7 +407,7 @@ export function getStudentAnalytics(input: { studentId: number; startDate?: stri
     marksParams.push(input.endDate);
   }
 
-  const marksRows = db
+  const marksRows = (await db
     .prepare(
       `SELECT e.id as exam_id, e.name as exam_name, e.start_date, sb.id as subject_id, sb.name as subject_name, me.max_marks, me.marks_obtained, me.is_absent
        FROM marks_entries me
@@ -416,7 +416,7 @@ export function getStudentAnalytics(input: { studentId: number; startDate?: stri
        WHERE ${marksClauses.join(" AND ")}
        ORDER BY e.start_date, sb.name`
     )
-    .all(...marksParams) as Array<{
+    .all(...marksParams)) as Array<{
     exam_id: number;
     exam_name: string;
     start_date: string | null;
@@ -538,11 +538,11 @@ export function getStudentAnalytics(input: { studentId: number; startDate?: stri
   for (const exam of exams) {
     if (!exam.start_date || exam.percent === null) continue;
     const month = exam.start_date.slice(0, 7);
-    const attendanceRateRow = db
+    const attendanceRateRow = (await db
       .prepare(
         "SELECT AVG(CASE WHEN ae.status = 'present' THEN 1.0 ELSE 0.0 END) AS present_rate FROM attendance_entries ae INNER JOIN attendance_sessions s ON s.id = ae.session_id WHERE ae.student_id = ? AND substr(s.date, 1, 7) = ?"
       )
-      .get(input.studentId, month) as { present_rate: number | null } | undefined;
+      .get(input.studentId, month)) as { present_rate: number | null } | undefined;
     if (attendanceRateRow && attendanceRateRow.present_rate !== null) {
       correlationPairs.push({
         attendance: attendanceRateRow.present_rate,

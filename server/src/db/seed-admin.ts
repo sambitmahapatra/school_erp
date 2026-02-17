@@ -1,4 +1,4 @@
-﻿import { initDb } from "./index";
+﻿import { getDb, initDb } from "./index";
 import { hashPassword } from "../modules/auth/auth.service";
 
 async function main() {
@@ -12,16 +12,19 @@ async function main() {
     process.exit(1);
   }
 
-  const db = await initDb();
+  await initDb();
+  const db = getDb();
   const now = new Date().toISOString();
   const passwordHash = hashPassword(password);
 
   const insertUser = db.prepare(
     "INSERT OR IGNORE INTO users (email, password_hash, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)"
   );
-  insertUser.run(email, passwordHash, now, now);
+  await insertUser.run(email, passwordHash, now, now);
 
-  const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: number } | undefined;
+  const user = (await db.prepare("SELECT id FROM users WHERE email = ?").get(email)) as
+    | { id: number }
+    | undefined;
   if (!user) {
     console.error("Failed to create admin user.");
     process.exit(1);
@@ -30,11 +33,13 @@ async function main() {
   const insertProfile = db.prepare(
     "INSERT OR IGNORE INTO teacher_profiles (user_id, first_name, last_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
   );
-  insertProfile.run(user.id, firstName, lastName, now, now);
+  await insertProfile.run(user.id, firstName, lastName, now, now);
 
-  const role = db.prepare("SELECT id FROM roles WHERE name = ?").get("admin_teacher") as { id: number } | undefined;
+  const role = (await db.prepare("SELECT id FROM roles WHERE name = ?").get("admin_teacher")) as
+    | { id: number }
+    | undefined;
   if (role) {
-    db.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)").run(user.id, role.id);
+    await db.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)").run(user.id, role.id);
   }
 
   console.log(`Admin user ready: ${email}`);

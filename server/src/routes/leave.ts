@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { validateBody } from "../middleware/validate";
+import { asyncHandler } from "../middleware/async-handler";
 import {
   createLeaveRequest,
   decideLeaveRequest,
@@ -13,16 +14,16 @@ import {
 
 const router = Router();
 
-router.get("/types", requireAuth, requirePermission("leave.read"), (_req, res) => {
-  res.json({ data: listLeaveTypes() });
-});
+router.get("/types", requireAuth, requirePermission("leave.read"), asyncHandler(async (_req, res) => {
+  res.json({ data: await listLeaveTypes() });
+}));
 
-router.get("/balances", requireAuth, requirePermission("leave.read"), (req, res) => {
+router.get("/balances", requireAuth, requirePermission("leave.read"), asyncHandler(async (req, res) => {
   if (!req.user.teacherId) {
     return res.status(400).json({ error: { code: "invalid_state", message: "Teacher profile missing" } });
   }
-  res.json({ data: getLeaveBalances(req.user.teacherId) });
-});
+  res.json({ data: await getLeaveBalances(req.user.teacherId) });
+}));
 
 const requestSchema = z.object({
   leaveTypeId: z.number(),
@@ -36,11 +37,11 @@ router.post(
   requireAuth,
   requirePermission("leave.write"),
   validateBody(requestSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     if (!req.user.teacherId) {
       return res.status(400).json({ error: { code: "invalid_state", message: "Teacher profile missing" } });
     }
-    const id = createLeaveRequest({
+    const id = await createLeaveRequest({
       teacherId: req.user.teacherId,
       leaveTypeId: req.body.leaveTypeId,
       startDate: req.body.startDate,
@@ -48,7 +49,7 @@ router.post(
       reason: req.body.reason
     });
     res.json({ data: { id } });
-  }
+  })
 );
 
 const decideSchema = z.object({ decision: z.enum(["approved", "rejected"]) });
@@ -58,16 +59,16 @@ router.patch(
   requireAuth,
   requirePermission("leave.write"),
   validateBody(decideSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const leaveRequestId = Number(req.params.id);
-    decideLeaveRequest({ leaveRequestId, approvedBy: req.user.id, decision: req.body.decision });
+    await decideLeaveRequest({ leaveRequestId, approvedBy: req.user.id, decision: req.body.decision });
     res.json({ data: { ok: true } });
-  }
+  })
 );
 
-router.get("/calendar", requireAuth, requirePermission("leave.read"), (req, res) => {
+router.get("/calendar", requireAuth, requirePermission("leave.read"), asyncHandler(async (req, res) => {
   const month = String(req.query.month);
-  res.json({ data: getLeaveCalendar(month) });
-});
+  res.json({ data: await getLeaveCalendar(month) });
+}));
 
 export default router;

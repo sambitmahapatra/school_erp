@@ -57,39 +57,39 @@ function parseCsv(csv: string) {
   return parse(clean, { columns: true, skip_empty_lines: true, trim: true });
 }
 
-function clearAttendance(db: ReturnType<typeof getDb>, classId: number) {
-  const audit = db
+async function clearAttendance(db: ReturnType<typeof getDb>, classId: number) {
+  const audit = (await db
     .prepare(
       "DELETE FROM attendance_audit WHERE entry_id IN (SELECT id FROM attendance_entries WHERE session_id IN (SELECT id FROM attendance_sessions WHERE class_id = ?))"
     )
-    .run(classId).changes;
-  const entries = db
+    .run(classId)).changes;
+  const entries = (await db
     .prepare("DELETE FROM attendance_entries WHERE session_id IN (SELECT id FROM attendance_sessions WHERE class_id = ?)")
-    .run(classId).changes;
-  const sessions = db.prepare("DELETE FROM attendance_sessions WHERE class_id = ?").run(classId).changes;
+    .run(classId)).changes;
+  const sessions = (await db.prepare("DELETE FROM attendance_sessions WHERE class_id = ?").run(classId)).changes;
   return { audit: audit ?? 0, entries: entries ?? 0, sessions: sessions ?? 0 };
 }
 
-function clearMarks(db: ReturnType<typeof getDb>, classId: number) {
-  const marks = db.prepare("DELETE FROM marks_entries WHERE class_id = ?").run(classId).changes;
+async function clearMarks(db: ReturnType<typeof getDb>, classId: number) {
+  const marks = (await db.prepare("DELETE FROM marks_entries WHERE class_id = ?").run(classId)).changes;
   return { marks: marks ?? 0 };
 }
 
-function clearNotes(db: ReturnType<typeof getDb>, classId: number) {
-  const notes = db
+async function clearNotes(db: ReturnType<typeof getDb>, classId: number) {
+  const notes = (await db
     .prepare("DELETE FROM teacher_notes WHERE student_id IN (SELECT id FROM students WHERE class_id = ?)")
-    .run(classId).changes;
+    .run(classId)).changes;
   return { notes: notes ?? 0 };
 }
 
-function clearStudents(db: ReturnType<typeof getDb>, classId: number) {
-  const attendance = clearAttendance(db, classId);
-  const marks = clearMarks(db, classId);
-  const notes = clearNotes(db, classId);
-  db.prepare("DELETE FROM student_subjects WHERE student_id IN (SELECT id FROM students WHERE class_id = ?)").run(
+async function clearStudents(db: ReturnType<typeof getDb>, classId: number) {
+  const attendance = await clearAttendance(db, classId);
+  const marks = await clearMarks(db, classId);
+  const notes = await clearNotes(db, classId);
+  await db.prepare("DELETE FROM student_subjects WHERE student_id IN (SELECT id FROM students WHERE class_id = ?)").run(
     classId
   );
-  const students = db.prepare("DELETE FROM students WHERE class_id = ?").run(classId).changes;
+  const students = (await db.prepare("DELETE FROM students WHERE class_id = ?").run(classId)).changes;
   return {
     attendance,
     marks,
@@ -98,11 +98,16 @@ function clearStudents(db: ReturnType<typeof getDb>, classId: number) {
   };
 }
 
-export function importStudentsFromCsv(userId: number, classId: number, csv: string, mode: StudentImportMode): ImportResult {
+export async function importStudentsFromCsv(
+  userId: number,
+  classId: number,
+  csv: string,
+  mode: StudentImportMode
+): Promise<ImportResult> {
   const db = getDb();
-  const classRow = db
+  const classRow = (await db
     .prepare("SELECT id, grade, section, name FROM classes WHERE id = ?")
-    .get(classId) as { id: number; grade: number; section: string; name: string } | undefined;
+    .get(classId)) as { id: number; grade: number; section: string; name: string } | undefined;
 
   if (!classRow) {
     return {
@@ -183,15 +188,15 @@ export function importStudentsFromCsv(userId: number, classId: number, csv: stri
   let updated = 0;
   let skipped = 0;
 
-  const tx = db.transaction(() => {
+  await db.transaction(async (tx) => {
     if (mode === "replace") {
-      clearStudents(db, classId);
+      await clearStudents(tx, classId);
     }
 
     for (const row of rows) {
-      const existing = db
+      const existing = (await tx
         .prepare("SELECT id, class_id FROM students WHERE admission_no = ?")
-        .get(row.admission_no) as { id: number; class_id: number } | undefined;
+        .get(row.admission_no)) as { id: number; class_id: number } | undefined;
 
       if (existing && existing.class_id !== classId) {
         errors.push({
@@ -203,34 +208,36 @@ export function importStudentsFromCsv(userId: number, classId: number, csv: stri
       }
 
       if (existing) {
-        db.prepare(
-          "UPDATE students SET first_name = ?, last_name = ?, roll_no = ?, status = ?, updated_at = ? WHERE id = ?"
-        ).run(row.first_name, row.last_name, row.roll_no ?? null, row.status, now, existing.id);
+        await tx
+          .prepare(
+            "UPDATE students SET first_name = ?, last_name = ?, roll_no = ?, status = ?, updated_at = ? WHERE id = ?"
+          )
+          .run(row.first_name, row.last_name, row.roll_no ?? null, row.status, now, existing.id);
         updated += 1;
         continue;
       }
 
-      db.prepare(
-        "INSERT INTO students (admission_no, first_name, last_name, class_id, roll_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(row.admission_no, row.first_name, row.last_name, classId, row.roll_no ?? null, row.status, now, now);
+      await tx
+        .prepare(
+          "INSERT INTO students (admission_no, first_name, last_name, class_id, roll_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .run(row.admission_no, row.first_name, row.last_name, classId, row.roll_no ?? null, row.status, now, now);
       inserted += 1;
     }
   });
 
-  tx();
-
-  logActivity(userId, "students.import", "class", classId, `mode=${mode}; inserted=${inserted}; updated=${updated}`);
+  await logActivity(userId, "students.import", "class", classId, `mode=${mode}; inserted=${inserted}; updated=${updated}`);
 
   return { inserted, updated, skipped, errors };
 }
 
-export function clearClassData(userId: number, classId: number, scope: ClearScope): ClearResult {
+export async function clearClassData(userId: number, classId: number, scope: ClearScope): Promise<ClearResult> {
   const db = getDb();
   const counts: ClearResult["counts"] = {};
 
-  const tx = db.transaction(() => {
+  await db.transaction(async (tx) => {
     if (scope === "attendance") {
-      const attendance = clearAttendance(db, classId);
+      const attendance = await clearAttendance(tx, classId);
       counts.attendanceAudit = attendance.audit;
       counts.attendanceEntries = attendance.entries;
       counts.attendanceSessions = attendance.sessions;
@@ -238,15 +245,15 @@ export function clearClassData(userId: number, classId: number, scope: ClearScop
     }
 
     if (scope === "marks") {
-      const marks = clearMarks(db, classId);
+      const marks = await clearMarks(tx, classId);
       counts.marksEntries = marks.marks;
       return;
     }
 
-    const attendance = clearAttendance(db, classId);
-    const marks = clearMarks(db, classId);
-    const notes = clearNotes(db, classId);
-    const students = db.prepare("DELETE FROM students WHERE class_id = ?").run(classId).changes;
+    const attendance = await clearAttendance(tx, classId);
+    const marks = await clearMarks(tx, classId);
+    const notes = await clearNotes(tx, classId);
+    const students = (await tx.prepare("DELETE FROM students WHERE class_id = ?").run(classId)).changes;
 
     counts.attendanceAudit = attendance.audit;
     counts.attendanceEntries = attendance.entries;
@@ -256,9 +263,7 @@ export function clearClassData(userId: number, classId: number, scope: ClearScop
     counts.students = students ?? 0;
   });
 
-  tx();
-
-  logActivity(userId, `data.clear.${scope}`, "class", classId);
+  await logActivity(userId, `data.clear.${scope}`, "class", classId);
 
   return { scope, counts };
 }

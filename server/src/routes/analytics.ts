@@ -1,13 +1,14 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { asyncHandler } from "../middleware/async-handler";
 import { getDb } from "../db";
 import { getClassesForUser } from "../modules/core/core.service";
 import { getClassExamAnalytics, getStudentAnalytics } from "../modules/analytics/analytics.service";
 
 const router = Router();
 
-router.get("/class", requireAuth, requirePermission("dashboard.read"), (req, res) => {
+router.get("/class", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (req, res) => {
   const classId = Number(req.query.classId);
   const examId = Number(req.query.examId);
   const subjectId = req.query.subjectId ? Number(req.query.subjectId) : null;
@@ -17,20 +18,20 @@ router.get("/class", requireAuth, requirePermission("dashboard.read"), (req, res
   }
 
   const isAdmin = req.user.roleNames.includes("admin_teacher");
-  const allowed = getClassesForUser(req.user.id, isAdmin).some((c) => c.id === classId);
+  const allowed = (await getClassesForUser(req.user.id, isAdmin)).some((c) => c.id === classId);
   if (!allowed) {
     return res.status(403).json({ error: { code: "forbidden", message: "Class not in scope" } });
   }
 
-  const data = getClassExamAnalytics({ classId, examId, subjectId });
+  const data = await getClassExamAnalytics({ classId, examId, subjectId });
   if (!data) {
     return res.status(404).json({ error: { code: "not_found", message: "Exam or class not found" } });
   }
 
   res.json({ data });
-});
+}));
 
-router.get("/student", requireAuth, requirePermission("progress.read"), (req, res) => {
+router.get("/student", requireAuth, requirePermission("progress.read"), asyncHandler(async (req, res) => {
   const studentId = Number(req.query.studentId);
   const startDate = req.query.startDate ? String(req.query.startDate) : undefined;
   const endDate = req.query.endDate ? String(req.query.endDate) : undefined;
@@ -40,26 +41,26 @@ router.get("/student", requireAuth, requirePermission("progress.read"), (req, re
   }
 
   const db = getDb();
-  const studentRow = db
+  const studentRow = (await db
     .prepare("SELECT id, class_id FROM students WHERE id = ?")
-    .get(studentId) as { id: number; class_id: number } | undefined;
+    .get(studentId)) as { id: number; class_id: number } | undefined;
 
   if (!studentRow) {
     return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
   }
 
   const isAdmin = req.user.roleNames.includes("admin_teacher");
-  const allowed = getClassesForUser(req.user.id, isAdmin).some((c) => c.id === studentRow.class_id);
+  const allowed = (await getClassesForUser(req.user.id, isAdmin)).some((c) => c.id === studentRow.class_id);
   if (!allowed) {
     return res.status(403).json({ error: { code: "forbidden", message: "Student not in scope" } });
   }
 
-  const data = getStudentAnalytics({ studentId, startDate, endDate });
+  const data = await getStudentAnalytics({ studentId, startDate, endDate });
   if (!data) {
     return res.status(404).json({ error: { code: "not_found", message: "Student not found" } });
   }
 
   res.json({ data });
-});
+}));
 
 export default router;

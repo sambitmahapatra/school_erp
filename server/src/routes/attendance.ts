@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { validateBody } from "../middleware/validate";
+import { asyncHandler } from "../middleware/async-handler";
 import {
   bulkUpsertEntries,
   createSession,
@@ -15,13 +16,13 @@ import {
 
 const router = Router();
 
-router.get("/sessions", requireAuth, requirePermission("attendance.read"), (req, res) => {
+router.get("/sessions", requireAuth, requirePermission("attendance.read"), asyncHandler(async (req, res) => {
   const date = req.query.date as string | undefined;
   const classId = req.query.classId ? Number(req.query.classId) : undefined;
   const subjectId = req.query.subjectId ? Number(req.query.subjectId) : undefined;
-  const sessions = listSessions({ date, classId, subjectId });
+  const sessions = await listSessions({ date, classId, subjectId });
   res.json({ data: sessions });
-});
+}));
 
 const createSessionSchema = z.object({
   date: z.string().min(10),
@@ -34,12 +35,12 @@ router.post(
   requireAuth,
   requirePermission("attendance.write"),
   validateBody(createSessionSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const { date, classId, subjectId } = req.body as { date: string; classId: number; subjectId?: number };
     if (!req.user.teacherId) {
       return res.status(400).json({ error: { code: "invalid_state", message: "Teacher profile missing" } });
     }
-    const id = createSession({
+    const id = await createSession({
       date,
       classId,
       subjectId: subjectId || null,
@@ -47,7 +48,7 @@ router.post(
       userId: req.user.id
     });
     res.json({ data: { id } });
-  }
+  })
 );
 
 const updateSessionSchema = z.object({ status: z.enum(["draft", "submitted"]) });
@@ -57,11 +58,11 @@ router.patch(
   requireAuth,
   requirePermission("attendance.write"),
   validateBody(updateSessionSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
-    updateSessionStatus(id, req.body.status);
+    await updateSessionStatus(id, req.body.status);
     res.json({ data: { id, status: req.body.status } });
-  }
+  })
 );
 
 const bulkSchema = z.object({
@@ -80,11 +81,11 @@ router.post(
   requireAuth,
   requirePermission("attendance.write"),
   validateBody(bulkSchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const { sessionId, entries } = req.body as { sessionId: number; entries: any[] };
-    bulkUpsertEntries({ sessionId, entries, updatedBy: req.user.id });
+    await bulkUpsertEntries({ sessionId, entries, updatedBy: req.user.id });
     res.json({ data: { ok: true } });
-  }
+  })
 );
 
 const updateEntrySchema = z.object({
@@ -97,24 +98,24 @@ router.patch(
   requireAuth,
   requirePermission("attendance.write"),
   validateBody(updateEntrySchema),
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const entryId = Number(req.params.id);
-    updateEntry(entryId, { status: req.body.status, reason: req.body.reason, updatedBy: req.user.id });
+    await updateEntry(entryId, { status: req.body.status, reason: req.body.reason, updatedBy: req.user.id });
     res.json({ data: { ok: true } });
-  }
+  })
 );
 
-router.get("/analytics/class", requireAuth, requirePermission("attendance.read"), (req, res) => {
+router.get("/analytics/class", requireAuth, requirePermission("attendance.read"), asyncHandler(async (req, res) => {
   const classId = Number(req.query.classId);
   const month = String(req.query.month);
-  const data = getClassAttendanceSummary(classId, month);
+  const data = await getClassAttendanceSummary(classId, month);
   res.json({ data });
-});
+}));
 
-router.get("/analytics/student/:studentId", requireAuth, requirePermission("attendance.read"), (req, res) => {
+router.get("/analytics/student/:studentId", requireAuth, requirePermission("attendance.read"), asyncHandler(async (req, res) => {
   const studentId = Number(req.params.studentId);
-  const data = getStudentAttendanceHistory(studentId);
+  const data = await getStudentAttendanceHistory(studentId);
   res.json({ data });
-});
+}));
 
 export default router;

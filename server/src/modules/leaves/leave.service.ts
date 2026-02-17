@@ -1,11 +1,11 @@
 ﻿import { getDb } from "../../db";
 
-export function listLeaveTypes() {
+export async function listLeaveTypes() {
   const db = getDb();
   return db.prepare("SELECT * FROM leave_types ORDER BY name").all();
 }
 
-export function getLeaveBalances(teacherId: number) {
+export async function getLeaveBalances(teacherId: number) {
   const db = getDb();
   return db
     .prepare(
@@ -14,7 +14,7 @@ export function getLeaveBalances(teacherId: number) {
     .all(teacherId);
 }
 
-export function createLeaveRequest(input: {
+export async function createLeaveRequest(input: {
   teacherId: number;
   leaveTypeId: number;
   startDate: string;
@@ -23,7 +23,7 @@ export function createLeaveRequest(input: {
 }) {
   const db = getDb();
   const now = new Date().toISOString();
-  const result = db
+  const result = await db
     .prepare(
       "INSERT INTO leave_requests (teacher_id, leave_type_id, start_date, end_date, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)"
     )
@@ -31,24 +31,26 @@ export function createLeaveRequest(input: {
   return Number(result.lastInsertRowid);
 }
 
-export function decideLeaveRequest(input: {
+export async function decideLeaveRequest(input: {
   leaveRequestId: number;
   approvedBy: number;
   decision: "approved" | "rejected";
 }) {
   const db = getDb();
   const now = new Date().toISOString();
-  db.prepare("UPDATE leave_requests SET status = ?, updated_at = ? WHERE id = ?").run(
+  await db.prepare("UPDATE leave_requests SET status = ?, updated_at = ? WHERE id = ?").run(
     input.decision,
     now,
     input.leaveRequestId
   );
-  db.prepare(
-    "INSERT INTO leave_approvals (leave_request_id, approved_by, decision, decided_at) VALUES (?, ?, ?, ?)"
-  ).run(input.leaveRequestId, input.approvedBy, input.decision, now);
+  await db
+    .prepare(
+      "INSERT INTO leave_approvals (leave_request_id, approved_by, decision, decided_at) VALUES (?, ?, ?, ?)"
+    )
+    .run(input.leaveRequestId, input.approvedBy, input.decision, now);
 }
 
-export function getLeaveCalendar(month: string) {
+export async function getLeaveCalendar(month: string) {
   const db = getDb();
   return db
     .prepare(

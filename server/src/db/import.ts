@@ -1,6 +1,6 @@
-import fs from "fs";
+﻿import fs from "fs";
 import { parse } from "csv-parse/sync";
-import { initDb } from "./index";
+import { getDb, initDb } from "./index";
 
 async function main() {
   const [, , type, filePath] = process.argv;
@@ -12,7 +12,8 @@ async function main() {
     return;
   }
 
-  const db = await initDb();
+  await initDb();
+  const db = getDb();
   const now = new Date().toISOString();
 
   function loadCsv(path: string) {
@@ -24,26 +25,30 @@ async function main() {
     return String(value || "").trim();
   }
 
-  function ensureAcademicYear(name: string, startDate?: string, endDate?: string) {
-    const existing = db.prepare("SELECT id FROM academic_years WHERE name = ?").get(name) as { id: number } | undefined;
+  async function ensureAcademicYear(name: string, startDate?: string, endDate?: string) {
+    const existing = (await db.prepare("SELECT id FROM academic_years WHERE name = ?").get(name)) as
+      | { id: number }
+      | undefined;
     if (existing) {
-      const hasActive = db.prepare("SELECT 1 FROM academic_years WHERE is_active = 1 LIMIT 1").get();
+      const hasActive = await db.prepare("SELECT 1 FROM academic_years WHERE is_active = 1 LIMIT 1").get();
       if (!hasActive) {
-        db.prepare("UPDATE academic_years SET is_active = 1 WHERE id = ?").run(existing.id);
+        await db.prepare("UPDATE academic_years SET is_active = 1 WHERE id = ?").run(existing.id);
       }
       return existing.id;
     }
     const start = startDate || `${new Date().getFullYear()}-04-01`;
     const end = endDate || `${new Date().getFullYear() + 1}-03-31`;
-    const hasActive = db.prepare("SELECT 1 FROM academic_years WHERE is_active = 1 LIMIT 1").get();
-    const result = db
+    const hasActive = await db.prepare("SELECT 1 FROM academic_years WHERE is_active = 1 LIMIT 1").get();
+    const result = await db
       .prepare("INSERT INTO academic_years (name, start_date, end_date, is_active) VALUES (?, ?, ?, ?)")
       .run(name, start, end, hasActive ? 0 : 1);
     return Number(result.lastInsertRowid);
   }
 
-  function getActiveYearId() {
-    const active = db.prepare("SELECT id FROM academic_years WHERE is_active = 1").get() as { id: number } | undefined;
+  async function getActiveYearId() {
+    const active = (await db.prepare("SELECT id FROM academic_years WHERE is_active = 1").get()) as
+      | { id: number }
+      | undefined;
     return active?.id ?? null;
   }
 
@@ -52,10 +57,10 @@ async function main() {
     for (const row of rows) {
       const yearName = row.academic_year || row.academicYear || row.year;
       if (!yearName) continue;
-      const yearId = ensureAcademicYear(yearName, row.year_start, row.year_end);
-      db.prepare(
-        "INSERT OR IGNORE INTO classes (grade, section, name, academic_year_id) VALUES (?, ?, ?, ?)"
-      ).run(Number(row.grade), row.section, row.name || `Class ${row.grade}${row.section}`, yearId);
+      const yearId = await ensureAcademicYear(yearName, row.year_start, row.year_end);
+      await db
+        .prepare("INSERT OR IGNORE INTO classes (grade, section, name, academic_year_id) VALUES (?, ?, ?, ?)")
+        .run(Number(row.grade), row.section, row.name || `Class ${row.grade}${row.section}`, yearId);
     }
     console.log(`Imported classes: ${rows.length}`);
     return;
@@ -64,9 +69,9 @@ async function main() {
   if (type === "subjects") {
     const rows = loadCsv(filePath);
     for (const row of rows) {
-      db.prepare(
-        "INSERT OR IGNORE INTO subjects (name, code, grade_from, grade_to) VALUES (?, ?, ?, ?)"
-      ).run(row.name, row.code, Number(row.grade_from), Number(row.grade_to));
+      await db
+        .prepare("INSERT OR IGNORE INTO subjects (name, code, grade_from, grade_to) VALUES (?, ?, ?, ?)")
+        .run(row.name, row.code, Number(row.grade_from), Number(row.grade_to));
     }
     console.log(`Imported subjects: ${rows.length}`);
     return;
@@ -74,7 +79,7 @@ async function main() {
 
   if (type === "students") {
     const rows = loadCsv(filePath);
-    const activeYearId = getActiveYearId();
+    const activeYearId = await getActiveYearId();
     if (!activeYearId) {
       console.error("No active academic year. Create one or import classes with an active year first.");
       process.exitCode = 1;
@@ -88,13 +93,13 @@ async function main() {
       let classRow: { id: number; name: string } | undefined;
 
       if (className) {
-        classRow = db
+        classRow = (await db
           .prepare("SELECT id, name FROM classes WHERE grade = ? AND section = ? AND name = ? AND academic_year_id = ?")
-          .get(gradeValue, sectionValue, className, activeYearId) as { id: number; name: string } | undefined;
+          .get(gradeValue, sectionValue, className, activeYearId)) as { id: number; name: string } | undefined;
       } else {
-        const matches = db
+        const matches = (await db
           .prepare("SELECT id, name FROM classes WHERE grade = ? AND section = ? AND academic_year_id = ?")
-          .all(gradeValue, sectionValue, activeYearId) as Array<{ id: number; name: string }>;
+          .all(gradeValue, sectionValue, activeYearId)) as Array<{ id: number; name: string }>;
         if (matches.length === 1) {
           classRow = matches[0];
         } else {
@@ -108,18 +113,20 @@ async function main() {
         continue;
       }
 
-      db.prepare(
-        "INSERT OR IGNORE INTO students (admission_no, first_name, last_name, class_id, roll_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        row.admission_no,
-        row.first_name,
-        row.last_name,
-        classRow.id,
-        row.roll_no ? Number(row.roll_no) : null,
-        row.status || "active",
-        now,
-        now
-      );
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO students (admission_no, first_name, last_name, class_id, roll_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .run(
+          row.admission_no,
+          row.first_name,
+          row.last_name,
+          classRow.id,
+          row.roll_no ? Number(row.roll_no) : null,
+          row.status || "active",
+          now,
+          now
+        );
     }
     console.log(`Imported students: ${rows.length}`);
     return;
@@ -129,11 +136,13 @@ async function main() {
     const rows = loadCsv(filePath);
     for (const row of rows) {
       const yearName = row.academic_year || row.academicYear || row.year;
-      const yearId = yearName ? ensureAcademicYear(yearName, row.year_start, row.year_end) : getActiveYearId();
+      const yearId = yearName ? await ensureAcademicYear(yearName, row.year_start, row.year_end) : await getActiveYearId();
       if (!yearId) continue;
-      db.prepare(
-        "INSERT OR IGNORE INTO exams (academic_year_id, term_id, name, exam_type, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)"
-      ).run(yearId, null, row.name, row.exam_type || row.type || "Exam", row.start_date || null, row.end_date || null);
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO exams (academic_year_id, term_id, name, exam_type, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .run(yearId, null, row.name, row.exam_type || row.type || "Exam", row.start_date || null, row.end_date || null);
     }
     console.log(`Imported exams: ${rows.length}`);
     return;
@@ -141,10 +150,14 @@ async function main() {
 
   if (type === "marks") {
     const rows = loadCsv(filePath);
-    const activeYearId = getActiveYearId();
+    const activeYearId = await getActiveYearId();
     for (const row of rows) {
-      const exam = db.prepare("SELECT id FROM exams WHERE name = ?").get(row.exam_name) as { id: number } | undefined;
-      const subject = db.prepare("SELECT id FROM subjects WHERE code = ?").get(row.subject_code) as { id: number } | undefined;
+      const exam = (await db.prepare("SELECT id FROM exams WHERE name = ?").get(row.exam_name)) as
+        | { id: number }
+        | undefined;
+      const subject = (await db.prepare("SELECT id FROM subjects WHERE code = ?").get(row.subject_code)) as
+        | { id: number }
+        | undefined;
 
       const className = normalize(row.class_name || row.stream || row.class);
       const gradeValue = Number(row.class_grade || row.grade);
@@ -153,13 +166,13 @@ async function main() {
       let classRow: { id: number; name: string } | undefined;
 
       if (className) {
-        classRow = db
+        classRow = (await db
           .prepare("SELECT id, name FROM classes WHERE grade = ? AND section = ? AND name = ? AND academic_year_id = ?")
-          .get(gradeValue, sectionValue, className, activeYearId) as { id: number; name: string } | undefined;
+          .get(gradeValue, sectionValue, className, activeYearId)) as { id: number; name: string } | undefined;
       } else {
-        const matches = db
+        const matches = (await db
           .prepare("SELECT id, name FROM classes WHERE grade = ? AND section = ? AND academic_year_id = ?")
-          .all(gradeValue, sectionValue, activeYearId) as Array<{ id: number; name: string }>;
+          .all(gradeValue, sectionValue, activeYearId)) as Array<{ id: number; name: string }>;
         if (matches.length === 1) {
           classRow = matches[0];
         } else {
@@ -168,9 +181,9 @@ async function main() {
         }
       }
 
-      const student = db
-        .prepare("SELECT id FROM students WHERE admission_no = ?")
-        .get(row.admission_no) as { id: number } | undefined;
+      const student = (await db.prepare("SELECT id FROM students WHERE admission_no = ?").get(row.admission_no)) as
+        | { id: number }
+        | undefined;
       if (!exam || !subject || !classRow || !student) {
         console.warn(`Skipping marks row. Missing exam/subject/class/student for ${row.admission_no}`);
         continue;
@@ -186,21 +199,23 @@ async function main() {
           .toLowerCase()
           .trim() === "yes";
 
-      db.prepare(
-        "INSERT OR IGNORE INTO marks_entries (exam_id, component_id, class_id, subject_id, student_id, teacher_id, max_marks, marks_obtained, is_absent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(
-        exam.id,
-        null,
-        classRow.id,
-        subject.id,
-        student.id,
-        row.teacher_id ? Number(row.teacher_id) : 0,
-        Number(row.max_marks),
-        row.marks_obtained !== undefined && row.marks_obtained !== "" ? Number(row.marks_obtained) : null,
-        isAbsent ? 1 : 0,
-        now,
-        now
-      );
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO marks_entries (exam_id, component_id, class_id, subject_id, student_id, teacher_id, max_marks, marks_obtained, is_absent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .run(
+          exam.id,
+          null,
+          classRow.id,
+          subject.id,
+          student.id,
+          row.teacher_id ? Number(row.teacher_id) : null,
+          Number(row.max_marks),
+          row.marks_obtained !== undefined && row.marks_obtained !== "" ? Number(row.marks_obtained) : null,
+          isAbsent ? 1 : 0,
+          now,
+          now
+        );
     }
     console.log(`Imported marks rows: ${rows.length}`);
     return;
@@ -209,8 +224,10 @@ async function main() {
   if (type === "leave-types") {
     const rows = loadCsv(filePath);
     for (const row of rows) {
-      db.prepare("INSERT OR IGNORE INTO leave_types (name, default_balance) VALUES (?, ?)")
-        .run(row.name, Number(row.default_balance || 0));
+      await db.prepare("INSERT OR IGNORE INTO leave_types (name, default_balance) VALUES (?, ?)").run(
+        row.name,
+        Number(row.default_balance || 0)
+      );
     }
     console.log(`Imported leave types: ${rows.length}`);
     return;

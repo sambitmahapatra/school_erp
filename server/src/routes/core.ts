@@ -1,6 +1,7 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { asyncHandler } from "../middleware/async-handler";
 import {
   getAssignments,
   getAcademicYears,
@@ -13,29 +14,29 @@ import {
 
 const router = Router();
 
-router.get("/classes", requireAuth, requirePermission("dashboard.read"), (req, res) => {
+router.get("/classes", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (req, res) => {
   const isAdmin = req.user.roleNames.includes("admin_teacher");
-  res.json({ data: getClassesForUser(req.user.id, isAdmin) });
-});
+  res.json({ data: await getClassesForUser(req.user.id, isAdmin) });
+}));
 
-router.get("/academic-years", requireAuth, requirePermission("dashboard.read"), (_req, res) => {
-  res.json({ data: getAcademicYears() });
-});
+router.get("/academic-years", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (_req, res) => {
+  res.json({ data: await getAcademicYears() });
+}));
 
-router.get("/subjects", requireAuth, requirePermission("dashboard.read"), (req, res) => {
+router.get("/subjects", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (req, res) => {
   const isAdmin = req.user.roleNames.includes("admin_teacher");
-  res.json({ data: getSubjectsForUser(req.user.id, isAdmin) });
-});
+  res.json({ data: await getSubjectsForUser(req.user.id, isAdmin) });
+}));
 
-router.get("/classes/:classId/subjects", requireAuth, requirePermission("dashboard.read"), (req, res) => {
+router.get("/classes/:classId/subjects", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (req, res) => {
   const classId = Number(req.params.classId);
   if (!classId) {
     return res.status(400).json({ error: { code: "invalid_params", message: "classId is required" } });
   }
-  res.json({ data: getClassSubjects(classId) });
-});
+  res.json({ data: await getClassSubjects(classId) });
+}));
 
-router.post("/classes/:classId/subjects", requireAuth, requirePermission("admin.read"), (req, res) => {
+router.post("/classes/:classId/subjects", requireAuth, requirePermission("admin.read"), asyncHandler(async (req, res) => {
   const classId = Number(req.params.classId);
   const { subjectName, subjectCode, isOptional, maxMarks } = req.body as {
     subjectName: string;
@@ -51,7 +52,7 @@ router.post("/classes/:classId/subjects", requireAuth, requirePermission("admin.
   }
 
   try {
-    const result = upsertClassSubject({
+    const result = await upsertClassSubject({
       classId,
       subjectName,
       subjectCode: subjectCode || null,
@@ -62,17 +63,17 @@ router.post("/classes/:classId/subjects", requireAuth, requirePermission("admin.
   } catch (err: any) {
     res.status(400).json({ error: { code: "invalid_request", message: err?.message || "Failed to save subject" } });
   }
-});
+}));
 
-router.get("/students", requireAuth, requirePermission("dashboard.read"), (req, res) => {
+router.get("/students", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (req, res) => {
   const classId = Number(req.query.classId);
   const isAdmin = req.user.roleNames.includes("admin_teacher");
-  res.json({ data: getStudentsForClass(req.user.id, classId, isAdmin) });
-});
+  res.json({ data: await getStudentsForClass(req.user.id, classId, isAdmin) });
+}));
 
-router.get("/assignments", requireAuth, requirePermission("dashboard.read"), (req, res) => {
+router.get("/assignments", requireAuth, requirePermission("dashboard.read"), asyncHandler(async (req, res) => {
   const isAdmin = req.user.roleNames.includes("admin_teacher");
-  res.json({ data: getAssignments(req.user.id, isAdmin) });
-});
+  res.json({ data: await getAssignments(req.user.id, isAdmin) });
+}));
 
 export default router;

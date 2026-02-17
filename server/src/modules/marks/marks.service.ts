@@ -1,8 +1,8 @@
-import { getDb } from "../../db";
+﻿import { getDb } from "../../db";
 import { logActivity } from "../activity";
 import { getClassSubjectMeta, setStudentSubjectEnrollment } from "../core/core.service";
 
-export function listExams(yearId?: number) {
+export async function listExams(yearId?: number) {
   const db = getDb();
   if (yearId) {
     return db.prepare("SELECT * FROM exams WHERE academic_year_id = ? ORDER BY start_date DESC").all(yearId);
@@ -10,7 +10,7 @@ export function listExams(yearId?: number) {
   return db.prepare("SELECT * FROM exams ORDER BY start_date DESC").all();
 }
 
-export function createExam(input: {
+export async function createExam(input: {
   academicYearId: number;
   termId?: number | null;
   name: string;
@@ -23,7 +23,7 @@ export function createExam(input: {
   const stmt = db.prepare(
     "INSERT INTO exams (academic_year_id, term_id, name, exam_type, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)"
   );
-  const result = stmt.run(
+  const result = await stmt.run(
     input.academicYearId,
     input.termId || null,
     input.name,
@@ -32,43 +32,41 @@ export function createExam(input: {
     input.endDate || null
   );
   if (input.createdBy) {
-    logActivity(input.createdBy, "exam.create", "exam", Number(result.lastInsertRowid));
+    await logActivity(input.createdBy, "exam.create", "exam", Number(result.lastInsertRowid));
   }
   return Number(result.lastInsertRowid);
 }
 
-export function listComponents(examId: number) {
+export async function listComponents(examId: number) {
   const db = getDb();
   return db.prepare("SELECT * FROM exam_components WHERE exam_id = ?").all(examId);
 }
 
-export function addComponent(input: { examId: number; name: string; maxMarks: number; weight?: number }) {
+export async function addComponent(input: { examId: number; name: string; maxMarks: number; weight?: number }) {
   const db = getDb();
   const stmt = db.prepare(
     "INSERT INTO exam_components (exam_id, name, max_marks, weight) VALUES (?, ?, ?, ?)"
   );
-  const result = stmt.run(input.examId, input.name, input.maxMarks, input.weight ?? 1.0);
+  const result = await stmt.run(input.examId, input.name, input.maxMarks, input.weight ?? 1.0);
   return Number(result.lastInsertRowid);
 }
 
-export function deleteExam(examId: number) {
+export async function deleteExam(examId: number) {
   const db = getDb();
-  const usage = db.prepare("SELECT COUNT(*) as count FROM marks_entries WHERE exam_id = ?").get(examId) as
+  const usage = (await db.prepare("SELECT COUNT(*) as count FROM marks_entries WHERE exam_id = ?").get(examId)) as
     | { count: number }
     | undefined;
   if (usage && usage.count > 0) {
     throw new Error("Cannot delete exam with existing marks.");
   }
 
-  const tx = db.transaction(() => {
-    db.prepare("DELETE FROM exam_components WHERE exam_id = ?").run(examId);
-    db.prepare("DELETE FROM exams WHERE id = ?").run(examId);
+  await db.transaction(async (tx) => {
+    await tx.prepare("DELETE FROM exam_components WHERE exam_id = ?").run(examId);
+    await tx.prepare("DELETE FROM exams WHERE id = ?").run(examId);
   });
-
-  tx();
 }
 
-export function bulkUpsertMarks(input: {
+export async function bulkUpsertMarks(input: {
   examId: number;
   componentId?: number | null;
   classId: number;
@@ -83,35 +81,34 @@ export function bulkUpsertMarks(input: {
   }>;
 }) {
   const db = getDb();
-  const classSubject = getClassSubjectMeta(input.classId, input.subjectId);
+  const classSubject = await getClassSubjectMeta(input.classId, input.subjectId);
   if (!classSubject) {
     throw new Error("Subject is not assigned to this class.");
   }
   const isOptional = Boolean(classSubject.is_optional);
   const now = new Date().toISOString();
-  const selectStmt = db.prepare(
-    "SELECT id FROM marks_entries WHERE exam_id = ? AND component_id IS ? AND class_id = ? AND subject_id = ? AND student_id = ?"
-  );
-  const insertStmt = db.prepare(
-    "INSERT INTO marks_entries (exam_id, component_id, class_id, subject_id, student_id, teacher_id, max_marks, marks_obtained, is_absent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  );
-  const updateStmt = db.prepare(
-    "UPDATE marks_entries SET max_marks = ?, marks_obtained = ?, is_absent = ?, updated_at = ? WHERE id = ?"
-  );
-  const deleteStmt = db.prepare(
-    "DELETE FROM marks_entries WHERE exam_id = ? AND component_id IS ? AND class_id = ? AND subject_id = ? AND student_id = ?"
-  );
-
-  const tx = db.transaction(() => {
+  await db.transaction(async (tx) => {
+    const selectStmt = tx.prepare(
+      "SELECT id FROM marks_entries WHERE exam_id = ? AND component_id IS ? AND class_id = ? AND subject_id = ? AND student_id = ?"
+    );
+    const insertStmt = tx.prepare(
+      "INSERT INTO marks_entries (exam_id, component_id, class_id, subject_id, student_id, teacher_id, max_marks, marks_obtained, is_absent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    const updateStmt = tx.prepare(
+      "UPDATE marks_entries SET max_marks = ?, marks_obtained = ?, is_absent = ?, updated_at = ? WHERE id = ?"
+    );
+    const deleteStmt = tx.prepare(
+      "DELETE FROM marks_entries WHERE exam_id = ? AND component_id IS ? AND class_id = ? AND subject_id = ? AND student_id = ?"
+    );
     for (const entry of input.entries) {
       if (entry.isNotApplicable) {
         if (isOptional) {
-          setStudentSubjectEnrollment({
+          await setStudentSubjectEnrollment({
             studentId: entry.studentId,
             classSubjectId: classSubject.id,
             isEnrolled: false
           });
-          deleteStmt.run(
+          await deleteStmt.run(
             input.examId,
             input.componentId || null,
             input.classId,
@@ -123,23 +120,23 @@ export function bulkUpsertMarks(input: {
       }
 
       if (isOptional) {
-        setStudentSubjectEnrollment({
+        await setStudentSubjectEnrollment({
           studentId: entry.studentId,
           classSubjectId: classSubject.id,
           isEnrolled: true
         });
       }
 
-      const existing = selectStmt.get(
+      const existing = (await selectStmt.get(
         input.examId,
         input.componentId || null,
         input.classId,
         input.subjectId,
         entry.studentId
-      ) as { id: number } | undefined;
+      )) as { id: number } | undefined;
 
       if (!existing) {
-        insertStmt.run(
+        await insertStmt.run(
           input.examId,
           input.componentId || null,
           input.classId,
@@ -153,7 +150,7 @@ export function bulkUpsertMarks(input: {
           now
         );
       } else {
-        updateStmt.run(
+        await updateStmt.run(
           entry.maxMarks,
           entry.marksObtained ?? null,
           entry.isAbsent ? 1 : 0,
@@ -163,20 +160,16 @@ export function bulkUpsertMarks(input: {
       }
     }
   });
-
-  tx();
 }
 
-export function getMarks(filters: { examId: number; classId: number; subjectId: number }) {
+export async function getMarks(filters: { examId: number; classId: number; subjectId: number }) {
   const db = getDb();
   return db
-    .prepare(
-      "SELECT * FROM marks_entries WHERE exam_id = ? AND class_id = ? AND subject_id = ? ORDER BY student_id"
-    )
+    .prepare("SELECT * FROM marks_entries WHERE exam_id = ? AND class_id = ? AND subject_id = ? ORDER BY student_id")
     .all(filters.examId, filters.classId, filters.subjectId);
 }
 
-export function getClassPerformance(examId: number, classId: number) {
+export async function getClassPerformance(examId: number, classId: number) {
   const db = getDb();
   return db
     .prepare(
@@ -185,7 +178,7 @@ export function getClassPerformance(examId: number, classId: number) {
     .all(examId, classId);
 }
 
-export function getStudentPerformance(studentId: number) {
+export async function getStudentPerformance(studentId: number) {
   const db = getDb();
   return db
     .prepare(
