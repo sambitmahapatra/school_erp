@@ -7,4 +7,4 @@ export type AuthContext = {
   teacherId?: number | null;
 };
 
-export type AuthedRequest = Request & { user?: AuthContext };
+export type AuthedRequest = Request & { user: AuthContext };
