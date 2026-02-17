@@ -1,0 +1,48 @@
+﻿@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Serif:wght@400;500;600&display=swap");
+
+:root {
+  --font-sans: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "IBM Plex Serif", Georgia, serif;
+
+  --color-bg: #f4f6f8;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f3f6fa;
+  --color-surface-strong: #e9eef5;
+  --color-ink: #142033;
+  --color-muted: #5f6b7a;
+  --color-border: #e2e7ee;
+  --color-border-strong: #d4dbe5;
+
+  --color-accent: #1d3557;
+  --color-accent-2: #27496d;
+  --color-accent-3: #0f2538;
+  --color-accent-soft: #e3ebf6;
+
+  --color-warning: #b45309;
+  --color-warning-soft: #fde9c7;
+  --color-success: #0f766e;
+  --color-success-soft: #d2f0ea;
+  --color-info: #1d4ed8;
+  --color-info-soft: #dbeafe;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  --shadow-sm: 0 2px 8px rgba(20, 32, 51, 0.08);
+  --shadow-md: 0 8px 24px rgba(20, 32, 51, 0.12);
+  --shadow-lg: 0 16px 40px rgba(20, 32, 51, 0.16);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 56px;
+  --space-9: 72px;
+}

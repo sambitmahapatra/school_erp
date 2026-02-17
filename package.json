@@ -1,0 +1,12 @@
+{
+  "name": "school-erp",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm --prefix server run dev:plain\" \"npm --prefix client run dev\"",
+    "dev:server": "npm --prefix server run dev:plain",
+    "dev:client": "npm --prefix client run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
